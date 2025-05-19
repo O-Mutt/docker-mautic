@@ -1,7 +1,6 @@
-FROM php:8.1-fpm as builder
+FROM php:8.3-fpm AS builder
 
-LABEL vendor="Mautic"
-LABEL maintainer="Mautic core team <>"
+COPY ./common/ /common/
 
 # Install PHP extensions
 RUN apt-get update && apt-get install --no-install-recommends -y \
@@ -37,7 +36,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     nodejs \
     npm
 
-RUN curl -L -o /tmp/amqp.tar.gz "https://github.com/php-amqp/php-amqp/archive/refs/tags/v2.1.1.tar.gz" \
+RUN curl -L -o /tmp/amqp.tar.gz "https://github.com/php-amqp/php-amqp/archive/refs/tags/v2.1.2.tar.gz" \
     && mkdir -p /usr/src/php/ext/amqp \
     && tar -C /usr/src/php/ext/amqp -zxvf /tmp/amqp.tar.gz --strip 1 \
     && rm /tmp/amqp.tar.gz
@@ -61,17 +60,34 @@ RUN cd /opt && \
     rm -rf /opt/mautic/var/cache/js && \
     find /opt/mautic/node_modules -mindepth 1 -maxdepth 1 -not \( -name 'jquery' -or -name 'vimeo-froogaloop2' \) | xargs rm -rf
 
-FROM php:8.1-fpm
+FROM php:8.3-fpm
 
 COPY --from=builder /usr/local/lib/php/extensions /usr/local/lib/php/extensions
 COPY --from=builder /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
 
 COPY --from=builder --chown=www-data:www-data /opt/mautic /var/www/html
 
+COPY --from=builder /common/local.php /local.php
+COPY --from=builder --chmod=755 ./common/docker-entrypoint.sh /entrypoint.sh
+COPY --from=builder --chmod=755 ./common/pre-run-checks.sh /pre-run-checks.sh
+COPY --from=builder --chmod=755 ./common/entrypoint_mautic_web.sh /entrypoint_mautic_web.sh
+COPY --from=builder --chmod=755 ./common/entrypoint_mautic_cron.sh /entrypoint_mautic_cron.sh
+COPY --from=builder --chmod=755 ./common/entrypoint_mautic_worker.sh /entrypoint_mautic_worker.sh
+
 # Install PHP extensions requirements and other dependencies
 RUN apt-get update && apt-get install --no-install-recommends -y \
-    unzip libwebp-dev libzip-dev libfreetype6-dev libjpeg62-turbo-dev libpng-dev libc-client-dev librabbitmq4 \
-    mariadb-client supervisor cron libfcgi-bin \
+    unzip \
+    libwebp-dev \
+    libzip-dev \
+    libfreetype6-dev \
+    libjpeg62-turbo-dev \
+    libpng-dev \
+    libc-client-dev \
+    librabbitmq4 \
+    mariadb-client \
+    supervisor \
+    cron \
+    libfcgi-bin \
     && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false \
     && rm -rf /var/lib/apt/lists/* \
     && rm /etc/cron.daily/*
@@ -83,22 +99,14 @@ ENV PHP_INI_VALUE_DATE_TIMEZONE='UTC' \
     PHP_INI_VALUE_POST_MAX_FILESIZE=512M \
     PHP_INI_VALUE_MAX_EXECUTION_TIME=300
 
-COPY ./common/php.ini /usr/local/etc/php/php.ini
-
-COPY ./common/docker-entrypoint.sh /entrypoint.sh
-COPY ./common/entrypoint_mautic_web.sh /entrypoint_mautic_web.sh
-COPY ./common/entrypoint_mautic_cron.sh /entrypoint_mautic_cron.sh
-COPY ./common/entrypoint_mautic_worker.sh /entrypoint_mautic_worker.sh
-
-# Apply necessary permissions
-RUN ["chmod", "+x", "/entrypoint.sh", "/entrypoint_mautic_web.sh", "/entrypoint_mautic_cron.sh", "/entrypoint_mautic_worker.sh"]
+COPY --from=builder /common/php.ini /usr/local/etc/php/php.ini
 
 # Setting worker env vars
 ENV DOCKER_MAUTIC_WORKERS_CONSUME_EMAIL=2 \
     DOCKER_MAUTIC_WORKERS_CONSUME_HIT=2 \
     DOCKER_MAUTIC_WORKERS_CONSUME_FAILED=2
 
-COPY ./common/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY --from=builder /common/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Define Mautic volumes to persist data
 VOLUME /var/www/html/config
@@ -110,6 +118,10 @@ WORKDIR /var/www/html/docroot
 ENV DOCKER_MAUTIC_ROLE=mautic_web \
     DOCKER_MAUTIC_RUN_MIGRATIONS=false \
     DOCKER_MAUTIC_LOAD_TEST_DATA=false
+
+
+LABEL vendor="Mautic"
+LABEL maintainer="Mautic core team <>"
 
 ENTRYPOINT ["/entrypoint.sh"]
 
